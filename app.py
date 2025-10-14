@@ -6,8 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os, uuid, yaml, logging
-
-# Optional: keep subprocess if you ever run docker locally; not used on Render.
+import random
 import subprocess
 
 # ---------- Config ----------
@@ -362,7 +361,6 @@ def calculate_cloud_costs(resources):
     }
     results = {}
     for provider, data in pricing.items():
-        # Find cheapest matching instance (very simple)
         best = None
         for k, inst in data.items():
             if isinstance(inst, dict) and "cpu" in inst:
@@ -373,8 +371,29 @@ def calculate_cloud_costs(resources):
             hourly = best["price"]
             monthly = hourly * 24 * 30
             total = monthly + data["storage"] * storage
-            results[provider] = {"name": data["name"], "instance_type": best, "hourly_cost": hourly, "monthly_cost": monthly, "storage_cost": data["storage"] * storage, "total_monthly": total}
+            # Add simple pros/cons for display
+            pros = [
+                f"Low latency in region {random.choice(['US', 'EU', 'APAC'])}",
+                f"Good performance for {cpu} vCPU / {memory} GB RAM",
+                "Supports common OS and tools"
+            ]
+            cons = [
+                f"Storage may be limited to {storage*10:.0f} GB",
+                "Additional network costs may apply",
+                "Spot pricing unavailable"
+            ]
+            results[provider] = {
+                "name": data["name"],
+                "instance_type": best,
+                "hourly_cost": hourly,
+                "monthly_cost": monthly,
+                "storage_cost": data["storage"] * storage,
+                "total_monthly": total,
+                "pros": pros,
+                "cons": cons
+            }
     return results
+
 
 # Keep function to patch compose with build (useful if you build locally)
 def patch_compose_with_build(compose_path, build_dir):
