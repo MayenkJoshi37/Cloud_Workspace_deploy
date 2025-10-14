@@ -351,47 +351,77 @@ def analyze_docker_compose_resources(yaml_path):
         current_app.logger.error(f"Error analyzing compose file: {str(e)}")
         return {"total_cpu": 2, "total_memory": 4, "total_storage": 20, "services": []}
 
+import random
+
 def calculate_cloud_costs(resources):
-    cpu, memory, storage = (resources["total_cpu"], resources["total_memory"], resources["total_storage"])
+    cpu, memory, storage = resources["total_cpu"], resources["total_memory"], resources["total_storage"]
+    
     pricing = {
-        "aws": {"ec2_t3_medium": {"cpu": 2, "memory": 4, "price": 0.0416}, "storage": 0.10, "name": "AWS"},
-        "azure": {"b2s": {"cpu": 2, "memory": 4, "price": 0.0408}, "storage": 0.12, "name": "Azure"},
-        "gcp": {"e2_medium": {"cpu": 2, "memory": 4, "price": 0.0335}, "storage": 0.08, "name": "GCP"},
-        "digitalocean": {"s_2vcpu_4gb": {"cpu": 2, "memory": 4, "price": 0.024}, "storage": 0.10, "name": "DigitalOcean"},
+        "aws": {"instances": {"t3_small": {"cpu": 2, "memory": 4, "price": 0.0416},
+                              "t3_medium": {"cpu": 4, "memory": 8, "price": 0.083}},
+                "storage": 0.10, "name": "AWS"},
+        "azure": {"instances": {"b1s": {"cpu": 1, "memory": 2, "price": 0.0204},
+                                "b2s": {"cpu": 2, "memory": 4, "price": 0.0408}},
+                  "storage": 0.12, "name": "Azure"},
+        "gcp": {"instances": {"e2_small": {"cpu": 2, "memory": 4, "price": 0.0335},
+                              "e2_medium": {"cpu": 4, "memory": 8, "price": 0.067}},
+                "storage": 0.08, "name": "GCP"},
+        "digitalocean": {"instances": {"s_1vcpu_2gb": {"cpu": 1, "memory": 2, "price": 0.012},
+                                       "s_2vcpu_4gb": {"cpu": 2, "memory": 4, "price": 0.024}},
+                         "storage": 0.10, "name": "DigitalOcean"},
     }
+
     results = {}
     for provider, data in pricing.items():
+        # Pick smallest instance that satisfies requirements
         best = None
-        for k, inst in data.items():
-            if isinstance(inst, dict) and "cpu" in inst:
-                if inst["cpu"] >= cpu and inst["memory"] >= memory:
-                    if not best or inst["price"] < best["price"]:
-                        best = inst
-        if best:
-            hourly = best["price"]
-            monthly = hourly * 24 * 30
-            total = monthly + data["storage"] * storage
-            # Add simple pros/cons for display
-            pros = [
-                f"Low latency in region {random.choice(['US', 'EU', 'APAC'])}",
-                f"Good performance for {cpu} vCPU / {memory} GB RAM",
-                "Supports common OS and tools"
-            ]
-            cons = [
-                f"Storage may be limited to {storage*10:.0f} GB",
-                "Additional network costs may apply",
-                "Spot pricing unavailable"
-            ]
-            results[provider] = {
-                "name": data["name"],
-                "instance_type": best,
-                "hourly_cost": hourly,
-                "monthly_cost": monthly,
-                "storage_cost": data["storage"] * storage,
-                "total_monthly": total,
-                "pros": pros,
-                "cons": cons
-            }
+        for inst_name, inst in data["instances"].items():
+            if inst["cpu"] >= cpu and inst["memory"] >= memory:
+                if not best or inst["price"] < best["price"]:
+                    best = inst.copy()
+                    best["name"] = inst_name
+        
+        if not best:
+            # fallback to largest available instance
+            best = max(data["instances"].values(), key=lambda x: x["cpu"])
+            best["name"] = [k for k,v in data["instances"].items() if v==best][0]
+
+        # Calculate costs
+        hourly = best["price"]
+        monthly = hourly * 24 * 30
+        storage_cost = data["storage"] * storage
+        total_monthly = monthly + storage_cost
+
+        # Enhanced pros
+        pros = [
+            f"Low latency in {random.choice(['US', 'EU', 'APAC'])}",
+            f"Good performance for {cpu} vCPU / {memory} GB RAM",
+            random.choice(["Supports common OS and tools", "Easy scaling options", "Managed services available"]),
+            "Strong security and compliance support",
+            "Wide global data center availability",
+            "Flexible pricing options including reserved and spot instances",
+            "Rich ecosystem of integrations and add-on services"
+        ]
+        # Enhanced cons
+        cons = [
+            f"Storage may be limited to {storage*10:.0f} GB",
+            random.choice(["Additional network costs may apply", "No free tier for this instance", "Spot pricing unavailable"]),
+            "Pricing can become complex at scale",
+            "Learning curve for managing advanced features",
+            "Some services may have regional availability limits"
+        ]
+
+        results[provider] = {
+            "name": data["name"],
+            "instance_type": best,
+            "hourly_cost": hourly,
+            "monthly_cost": monthly,
+            "storage_cost": storage_cost,
+            "total_monthly": total_monthly,
+            "pros": pros,
+            "cons": cons
+        }
+
     return results
 
 
