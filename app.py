@@ -211,7 +211,29 @@ COPY environment.yml /tmp/environment.yml
         return redirect(url_for("dashboard"))
     return render_template("workspace.html")
 
-# NOTE: on Render we DO NOT run docker-compose. The run/stop endpoints update status only.
+# # NOTE: on Render we DO NOT run docker-compose. The run/stop endpoints update status only.
+# @app.route("/workspace/run/<int:id>")
+# @login_required
+# def run_workspace(id):
+#     ws = db.session.get(Workspace, id)
+#     if ws is None:
+#         abort(404)
+#     if ws.user_id != current_user.id:
+#         flash("Access denied", "danger")
+#         return redirect(url_for("dashboard"))
+
+#     # If compose exists, simulate a "deployed" state and show service info.
+#     compose_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
+#     if not os.path.exists(compose_path):
+#         flash("Workspace file not found", "danger")
+#         return redirect(url_for("dashboard"))
+
+#     # Replace actual Docker operations with a simulated deployment state
+#     ws.status = "deployed"
+#     db.session.commit()
+#     flash("Workspace marked as deployed (note: Docker cannot run on Render web instance).", "success")
+#     return redirect(url_for("dashboard"))
+
 @app.route("/workspace/run/<int:id>")
 @login_required
 def run_workspace(id):
@@ -222,17 +244,40 @@ def run_workspace(id):
         flash("Access denied", "danger")
         return redirect(url_for("dashboard"))
 
-    # If compose exists, simulate a "deployed" state and show service info.
     compose_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
     if not os.path.exists(compose_path):
-        flash("Workspace file not found", "danger")
+        flash("Compose file not found", "danger")
         return redirect(url_for("dashboard"))
 
-    # Replace actual Docker operations with a simulated deployment state
-    ws.status = "deployed"
-    db.session.commit()
-    flash("Workspace marked as deployed (note: Docker cannot run on Render web instance).", "success")
+    try:
+        # Run Docker Compose up -d
+        subprocess.run(["docker-compose", "-f", compose_path, "up", "-d"], check=True)
+        ws.status = "running"
+        db.session.commit()
+        flash("Workspace container started successfully!", "success")
+    except subprocess.CalledProcessError as e:
+        current_app.logger.error(f"Docker run failed: {e}")
+        ws.status = "error"
+        db.session.commit()
+        flash(f"Failed to start workspace: {e}", "danger")
+
     return redirect(url_for("dashboard"))
+
+
+# @app.route("/workspace/stop/<int:id>")
+# @login_required
+# def stop_workspace(id):
+#     ws = db.session.get(Workspace, id)
+#     if ws is None:
+#         abort(404)
+#     if ws.user_id != current_user.id:
+#         flash("Access denied", "danger")
+#         return redirect(url_for("dashboard"))
+
+#     ws.status = "stopped"
+#     db.session.commit()
+#     flash("Workspace stopped (UI-only)", "info")
+#     return redirect(url_for("dashboard"))
 
 @app.route("/workspace/stop/<int:id>")
 @login_required
@@ -244,10 +289,24 @@ def stop_workspace(id):
         flash("Access denied", "danger")
         return redirect(url_for("dashboard"))
 
-    ws.status = "stopped"
-    db.session.commit()
-    flash("Workspace stopped (UI-only)", "info")
+    compose_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
+    if not os.path.exists(compose_path):
+        flash("Compose file missing", "warning")
+        ws.status = "stopped"
+        db.session.commit()
+        return redirect(url_for("dashboard"))
+
+    try:
+        subprocess.run(["docker-compose", "-f", compose_path, "down"], check=True)
+        ws.status = "stopped"
+        db.session.commit()
+        flash("Workspace stopped and containers removed.", "info")
+    except subprocess.CalledProcessError as e:
+        current_app.logger.error(f"Docker stop failed: {e}")
+        flash("Failed to stop workspace.", "danger")
+
     return redirect(url_for("dashboard"))
+
 
 @app.route("/workspace/delete/<int:id>")
 @login_required
