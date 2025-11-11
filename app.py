@@ -294,32 +294,55 @@ def stop_workspace(id):
 
     return redirect(url_for("dashboard"))
 
-
-
 @app.route("/workspace/delete/<int:id>")
 @login_required
 def delete_workspace(id):
     ws = db.session.get(Workspace, id)
     if ws is None:
         abort(404)
+    if ws.user_id != current_user.id:
+        flash("Access denied", "danger")
+        return redirect(url_for("dashboard"))
 
-    # remove files (best-effort)
+    # --- Try to stop and remove any Docker container ---
+    try:
+        project_name = f"workspace_{ws.id}"
+        compose_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
+        if os.path.exists(compose_path):
+            subprocess.run(
+                ["docker-compose", "-p", project_name, "-f", compose_path, "down", "-v"],
+                check=False, capture_output=True, text=True, timeout=60
+            )
+    except Exception as e:
+        current_app.logger.warning(f"Error removing Docker containers for workspace {ws.id}: {e}")
+
+    # --- Delete associated files ---
     try:
         if ws.yaml_filename:
-            os.remove(os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename))
+            yaml_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
         if ws.env_filename:
-            os.remove(os.path.join(current_app.config["UPLOAD_FOLDER"], ws.env_filename))
+            env_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.env_filename)
+            if os.path.exists(env_path):
+                os.remove(env_path)
+
         build_dir = os.path.join(current_app.config["UPLOAD_FOLDER"], f"build_{ws.id}")
         if os.path.exists(build_dir):
             import shutil
             shutil.rmtree(build_dir)
-    except Exception as e:
-        current_app.logger.warning(f"delete workspace files issue: {e}")
 
+    except Exception as e:
+        current_app.logger.warning(f"Error deleting files for workspace {ws.id}: {e}")
+
+    # --- Delete the DB record ---
     db.session.delete(ws)
     db.session.commit()
-    flash("Workspace deleted", "warning")
+
+    flash("Workspace deleted successfully", "success")
     return redirect(url_for("dashboard"))
+
 
 @app.route("/workspace/refresh-status/<int:id>")
 @login_required
