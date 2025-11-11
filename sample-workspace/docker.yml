@@ -1,6 +1,6 @@
 services:
   codeserver:
-    image: codercom/code-server:latest
+    image: code-server-python       # this is built automatically by your AWS runner
     environment:
       - PASSWORD=123456789
     ports:
