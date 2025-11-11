@@ -211,28 +211,10 @@ COPY environment.yml /tmp/environment.yml
         return redirect(url_for("dashboard"))
     return render_template("workspace.html")
 
-# # NOTE: on Render we DO NOT run docker-compose. The run/stop endpoints update status only.
-# @app.route("/workspace/run/<int:id>")
-# @login_required
-# def run_workspace(id):
-#     ws = db.session.get(Workspace, id)
-#     if ws is None:
-#         abort(404)
-#     if ws.user_id != current_user.id:
-#         flash("Access denied", "danger")
-#         return redirect(url_for("dashboard"))
+import requests
 
-#     # If compose exists, simulate a "deployed" state and show service info.
-#     compose_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
-#     if not os.path.exists(compose_path):
-#         flash("Workspace file not found", "danger")
-#         return redirect(url_for("dashboard"))
-
-#     # Replace actual Docker operations with a simulated deployment state
-#     ws.status = "deployed"
-#     db.session.commit()
-#     flash("Workspace marked as deployed (note: Docker cannot run on Render web instance).", "success")
-#     return redirect(url_for("dashboard"))
+RUNNER_URL = os.environ.get("RUNNER_URL")
+RUNNER_TOKEN = os.environ.get("RUNNER_TOKEN")
 
 @app.route("/workspace/run/<int:id>")
 @login_required
@@ -249,35 +231,36 @@ def run_workspace(id):
         flash("Compose file not found", "danger")
         return redirect(url_for("dashboard"))
 
+    # optional env file
+    env_path = None
+    if ws.env_filename:
+        env_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.env_filename)
+
+    # Prepare files to send
+    files = {
+        "yaml_file": open(compose_path, "rb")
+    }
+    if env_path and os.path.exists(env_path):
+        files["env_file"] = open(env_path, "rb")
+
+    headers = {"X-Runner-Token": RUNNER_TOKEN}
+
     try:
-        # Run Docker Compose up -d
-        subprocess.run(["docker-compose", "-f", compose_path, "up", "-d"], check=True)
-        ws.status = "running"
-        db.session.commit()
-        flash("Workspace container started successfully!", "success")
-    except subprocess.CalledProcessError as e:
-        current_app.logger.error(f"Docker run failed: {e}")
-        ws.status = "error"
-        db.session.commit()
-        flash(f"Failed to start workspace: {e}", "danger")
+        response = requests.post(f"{RUNNER_URL}/run-docker", files=files, headers=headers, timeout=60)
+        if response.status_code == 200:
+            ws.status = "running"
+            db.session.commit()
+            flash("Workspace started successfully on AWS!", "success")
+        else:
+            flash(f"Runner error ({response.status_code}): {response.text}", "danger")
+    except Exception as e:
+        flash(f"Failed to reach runner: {e}", "danger")
+    finally:
+        for f in files.values():
+            f.close()
 
     return redirect(url_for("dashboard"))
 
-
-# @app.route("/workspace/stop/<int:id>")
-# @login_required
-# def stop_workspace(id):
-#     ws = db.session.get(Workspace, id)
-#     if ws is None:
-#         abort(404)
-#     if ws.user_id != current_user.id:
-#         flash("Access denied", "danger")
-#         return redirect(url_for("dashboard"))
-
-#     ws.status = "stopped"
-#     db.session.commit()
-#     flash("Workspace stopped (UI-only)", "info")
-#     return redirect(url_for("dashboard"))
 
 @app.route("/workspace/stop/<int:id>")
 @login_required
@@ -289,23 +272,28 @@ def stop_workspace(id):
         flash("Access denied", "danger")
         return redirect(url_for("dashboard"))
 
-    compose_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.yaml_filename)
-    if not os.path.exists(compose_path):
-        flash("Compose file missing", "warning")
-        ws.status = "stopped"
-        db.session.commit()
-        return redirect(url_for("dashboard"))
+    headers = {"X-Runner-Token": RUNNER_TOKEN}
 
     try:
-        subprocess.run(["docker-compose", "-f", compose_path, "down"], check=True)
-        ws.status = "stopped"
-        db.session.commit()
-        flash("Workspace stopped and containers removed.", "info")
-    except subprocess.CalledProcessError as e:
-        current_app.logger.error(f"Docker stop failed: {e}")
-        flash("Failed to stop workspace.", "danger")
+        # Stop the workspace remotely
+        response = requests.post(
+            f"{RUNNER_URL}/stop-docker",
+            data={"project_name": f"ws_{ws.id}"},
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            ws.status = "stopped"
+            db.session.commit()
+            flash("Workspace stopped successfully on AWS.", "info")
+        else:
+            flash(f"Runner error ({response.status_code}): {response.text}", "danger")
+    except Exception as e:
+        flash(f"Failed to reach runner: {e}", "danger")
 
     return redirect(url_for("dashboard"))
+
 
 
 @app.route("/workspace/delete/<int:id>")
