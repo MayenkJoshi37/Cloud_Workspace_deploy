@@ -237,30 +237,39 @@ def run_workspace(id):
         env_path = os.path.join(current_app.config["UPLOAD_FOLDER"], ws.env_filename)
 
     # Prepare files to send
-    files = {
-        "yaml_file": open(compose_path, "rb")
-    }
+    files = {"yaml_file": open(compose_path, "rb")}
     if env_path and os.path.exists(env_path):
         files["env_file"] = open(env_path, "rb")
 
     headers = {"X-Runner-Token": RUNNER_TOKEN}
 
     try:
-        response = requests.post(f"{RUNNER_URL}/run-docker", files=files, headers=headers, timeout=60)
-        if response.status_code == 200:
+        response = requests.post(
+            f"{RUNNER_URL}/run-docker",
+            files=files,
+            headers=headers,
+            timeout=120,
+        )
+
+        if response.ok:
             ws.status = "running"
             db.session.commit()
-            flash("Workspace started successfully on AWS!", "success")
+            flash("✅ Workspace started successfully on AWS!", "success")
         else:
-            flash(f"Runner error ({response.status_code}): {response.text}", "danger")
-    except Exception as e:
-        flash(f"Failed to reach runner: {e}", "danger")
+            msg = response.text[:200] if response.text else "No response text"
+            flash(f"⚠️ Runner returned {response.status_code}: {msg}", "warning")
+
+    except requests.exceptions.Timeout:
+        flash("⏱️ Runner took too long to respond (timeout). Try again.", "warning")
+
+    except requests.exceptions.RequestException as e:
+        flash(f"❌ Failed to reach AWS runner: {str(e)}", "danger")
+
     finally:
         for f in files.values():
             f.close()
 
     return redirect(url_for("dashboard"))
-
 
 @app.route("/workspace/stop/<int:id>")
 @login_required
